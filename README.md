@@ -19,3 +19,9 @@ java program to recieve the information.
 
 `python.java` must be run on the client device (the one recieving the data 
 from the OAK and Raspberry Pi)
+
+## How to run
+
+On the Raspberry Pi, run the `camera_detection.py` python program
+
+On the client computer, run the `python.java` java program
