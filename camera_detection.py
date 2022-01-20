@@ -183,8 +183,8 @@ def gen_frames():
             cv2.putText(frame, f"X: {int(detection.spatialCoordinates.x)} mm", (x1 + 10, y1 + 50), cv2.FONT_HERSHEY_TRIPLEX, 0.5, 255)
             cv2.putText(frame, f"Y: {int(detection.spatialCoordinates.y)} mm", (x1 + 10, y1 + 65), cv2.FONT_HERSHEY_TRIPLEX, 0.5, 255)
             cv2.putText(frame, f"Z: {int(detection.spatialCoordinates.z)} mm", (x1 + 10, y1 + 80), cv2.FONT_HERSHEY_TRIPLEX, 0.5, 255)
-            print_str = print_str + "%s, %d, %d, %d, %d, %d, %d, %d; " %(label, x1, y1, x2, y2,
-                                                                        int(detection.spatialCoordinates.x), int(detection.spatialCoordinates.y), int(detection.spatialCoordinates.z))
+            print_str = print_str + "%s, %d, %d, %d, %d, %f, %f, %f; " %(label, x1, y1, x2, y2,
+                                                                        detection.spatialCoordinates.x, detection.spatialCoordinates.y, detection.spatialCoordinates.z)
             cv2.rectangle(frame, (x1, y1), (x2, y2), color, cv2.FONT_HERSHEY_SIMPLEX)
         if(print_str != ""):
             print_str = print_str + '\n'
