@@ -30,16 +30,18 @@ public class Oak {
                     Detection[] dec = new Detection[objs.length];
                     int i = 0;
                     for(String obj: objs) {
+                        if(obj.trim().equals("")) continue;
+                        System.out.println(obj);
                         String[] arr = obj.split(",");
                         Detection d = new Detection();
                         d.label = arr[0];
-                        d.x1 = Integer.parseInt(arr[1]);
-                        d.y1 = Integer.parseInt(arr[2]);
-                        d.x2 = Integer.parseInt(arr[3]);
-                        d.y2 = Integer.parseInt(arr[4]);
-                        d.x = Double.parseDouble(arr[5]);
-                        d.y = Double.parseDouble(arr[6]);
-                        d.z = Double.parseDouble(arr[7]);
+                        d.x1 = Integer.parseInt(arr[1].trim());
+                        d.y1 = Integer.parseInt(arr[2].trim());
+                        d.x2 = Integer.parseInt(arr[3].trim());
+                        d.y2 = Integer.parseInt(arr[4].trim());
+                        d.x = Double.parseDouble(arr[5].trim());
+                        d.y = Double.parseDouble(arr[6].trim());
+                        d.z = Double.parseDouble(arr[7].trim());
                         dec[i++] = d;
                     }
                     evaluateDetections(dec);
@@ -55,6 +57,6 @@ public class Oak {
     }
 
     public static void main(String[] args) throws IOException, InterruptedException {
-        Oak o = new Oak("localhost", 12802);
+        Oak o = new Oak("localhost", 12801);
     }
 }

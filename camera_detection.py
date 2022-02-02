@@ -7,6 +7,7 @@ import time
 import socket
 import threading
 from flask import Flask, render_template, Response
+from centroid_detection import CentroidTracker
 
 '''
 Spatial Tiny-yolo example
@@ -14,22 +15,13 @@ Spatial Tiny-yolo example
   Can be used for tiny-yolo-v3 or tiny-yolo-v4 networks
 '''
 
-nnBlobPath = str((Path(__file__).parent / Path('./models/yolo-v4-tiny-tf_openvino_2021.4_6shave.blob')).resolve().absolute())
+print("started")
+nnBlobPath = str((Path(__file__).parent / Path('./models/frozen_darknet_yolov4_model.blob')).resolve().absolute())
 
-labelMap = [
-    "person",         "bicycle",    "car",           "motorbike",     "aeroplane",   "bus",           "train",
-    "truck",          "boat",       "traffic light", "fire hydrant",  "stop sign",   "parking meter", "bench",
-    "bird",           "cat",        "dog",           "horse",         "sheep",       "cow",           "elephant",
-    "bear",           "zebra",      "giraffe",       "backpack",      "umbrella",    "handbag",       "tie",
-    "suitcase",       "frisbee",    "skis",          "snowboard",     "sports ball", "kite",          "baseball bat",
-    "baseball glove", "skateboard", "surfboard",     "tennis racket", "bottle",      "wine glass",    "cup",
-    "fork",           "knife",      "spoon",         "bowl",          "banana",      "apple",         "sandwich",
-    "orange",         "broccoli",   "carrot",        "hot dog",       "pizza",       "donut",         "cake",
-    "chair",          "sofa",       "pottedplant",   "bed",           "diningtable", "toilet",        "tvmonitor",
-    "laptop",         "mouse",      "remote",        "keyboard",      "cell phone",  "microwave",     "oven",
-    "toaster",        "sink",       "refrigerator",  "book",          "clock",       "vase",          "scissors",
-    "teddy bear",     "hair drier", "toothbrush"
-]
+print("loaded")
+
+file = open("coco.names")
+labelMap = [line.rstrip() for line in file]
 
 syncNN = True
 
@@ -112,7 +104,7 @@ conn, addr = s.accept()
 
 # Connect to device and start pipeline
 def gen_frames():
-    device = dai.Device(pipeline)
+    device = dai.Device(pipeline, usb2Mode=True)
 
     # Output queues will be used to get the rgb frames and nn data from the outputs defined above
     previewQueue = device.getOutputQueue(name="rgb", maxSize=4, blocking=False)
@@ -124,6 +116,8 @@ def gen_frames():
     counter = 0
     fps = 0
     color = (255, 255, 255)
+
+    ct = CentroidTracker()
 
     while True:
         inPreview = previewQueue.get()
@@ -164,6 +158,8 @@ def gen_frames():
                 #cv2.rectangle(depthFrameColor, (xmin, ymin), (xmax, ymax), color, cv2.FONT_HERSHEY_SCRIPT_SIMPLEX)
 
         print_str = ""
+
+        rects = []
         
         # If the frame is available, draw bounding boxes on it and show the frame
         height = frame.shape[0]
@@ -174,6 +170,8 @@ def gen_frames():
             x2 = int(detection.xmax * width)
             y1 = int(detection.ymin * height)
             y2 = int(detection.ymax * height)
+            rects.append(((x1+x2)/2, (y1+y2)/2, detection.spatialCoordinates.x, detection.spatialCoordinates.y, detection.spatialCoordinates.z, detection.label))
+
             try:
                 label = labelMap[detection.label]
             except:
@@ -183,23 +181,34 @@ def gen_frames():
             cv2.putText(frame, f"X: {int(detection.spatialCoordinates.x)} mm", (x1 + 10, y1 + 50), cv2.FONT_HERSHEY_TRIPLEX, 0.5, 255)
             cv2.putText(frame, f"Y: {int(detection.spatialCoordinates.y)} mm", (x1 + 10, y1 + 65), cv2.FONT_HERSHEY_TRIPLEX, 0.5, 255)
             cv2.putText(frame, f"Z: {int(detection.spatialCoordinates.z)} mm", (x1 + 10, y1 + 80), cv2.FONT_HERSHEY_TRIPLEX, 0.5, 255)
-            print_str = print_str + "%s, %d, %d, %d, %d, %f, %f, %f; " %(label, x1, y1, x2, y2,
+            print_str = print_str + "%s,%d,%d,%d,%d,%f,%f,%f;" %(label, x1, y1, x2, y2,
                                                                         detection.spatialCoordinates.x, detection.spatialCoordinates.y, detection.spatialCoordinates.z)
             cv2.rectangle(frame, (x1, y1), (x2, y2), color, cv2.FONT_HERSHEY_SIMPLEX)
+
+        objects = ct.update(rects)
+
+        for (objectID, centroid) in objects.items():
+            # draw both the ID of the object and the centroid of the
+            # object on the output frame
+            text = "ID {}".format(objectID)
+            cv2.putText(frame, text, (int(centroid[0]) - 10, int(centroid[1] - 10)), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 2)
+            cv2.circle(frame, (int(centroid[0]), int(centroid[1])), 4, (0, 255, 0), -1)
+
         if(print_str != ""):
             print_str = print_str + '\n'
             conn.sendall(print_str.encode('utf-8'))
         cv2.putText(frame, "NN fps: {:.2f}".format(fps), (2, frame.shape[0] - 4), cv2.FONT_HERSHEY_TRIPLEX, 0.4, color)
         #cv2.imshow("depth", depthFrameColor)
-        #cv2.imshow("rgb", frame)
+        cv2.imshow("rgb", frame)
+
+        key = cv2.waitKey(1) & 0xFF
+        if key == ord('q'):
+            break
 
         ret, buffer = cv2.imencode('.jpg', frame)
         frame = buffer.tobytes()
         yield (b'--frame\r\n'
                  b'Content-Type: image/jpeg\r\n\r\n' + frame + b'\r\n')  # concat frame one by one and show result
-
-        if cv2.waitKey(1) == ord('q'):
-            break
     conn.close()
 
 @app.route('/video_feed')
