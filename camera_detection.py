@@ -8,6 +8,36 @@ import socket
 import threading
 from flask import Flask, render_template, Response
 from centroid_detection import CentroidTracker
+from math import atan2, asin, pi, sin, cos, sqrt
+
+def quaternion_multiply(quaternion1, quaternion0):
+    w0, x0, y0, z0 = quaternion0
+    w1, x1, y1, z1 = quaternion1
+    return -x1 * x0 - y1 * y0 - z1 * z0 + w1 * w0, x1 * w0 + y1 * z0 - z1 * y0 + w1 * x0, -x1 * z0 + y1 * w0 + z1 * x0 + w1 * y0, x1 * y0 - y1 * x0 + z1 * w0 + w1 * z0
+
+def toEulerAngles(q):
+
+    # roll (x-axis rotation)
+    sinr_cosp = 2 * (q[0] * q[1] + q[2] * q[3])
+    cosr_cosp = 1 - 2 * (q[1] * q[1] + q[2] * q[2])
+    roll = atan2(sinr_cosp, cosr_cosp)
+
+    # pitch (y-axis rotation)
+    sinp = 2 * (q[0] * q[2] - q[3] * q[1])
+    pitch = 0
+    if abs(sinp) >= 1:
+        pitch = pi/2
+        if sinp < 0:
+            pitch = -pitch
+    else:
+        pitch = asin(sinp)
+
+    # yaw (z-axis rotation)
+    siny_cosp = 2 * (q[0] * q[3] + q[1] * q[2])
+    cosy_cosp = 1 - 2 * (q[2] * q[2] + q[3] * q[3])
+    yaw = atan2(siny_cosp, cosy_cosp)
+
+    return (yaw, pitch, roll)
 
 '''
 Spatial Tiny-yolo example
@@ -35,16 +65,19 @@ spatialDetectionNetwork = pipeline.createYoloSpatialDetectionNetwork()
 monoLeft = pipeline.createMonoCamera()
 monoRight = pipeline.createMonoCamera()
 stereo = pipeline.createStereoDepth()
+imu = pipeline.createIMU()
 
 xoutRgb = pipeline.createXLinkOut()
 xoutNN = pipeline.createXLinkOut()
 xoutBoundingBoxDepthMapping = pipeline.createXLinkOut()
 xoutDepth = pipeline.createXLinkOut()
+xoutIMU = pipeline.createXLinkOut()
 
 xoutRgb.setStreamName("rgb")
 xoutNN.setStreamName("detections")
 xoutBoundingBoxDepthMapping.setStreamName("boundingBoxDepthMapping")
 xoutDepth.setStreamName("depth")
+xoutIMU.setStreamName("imu")
 
 # Properties
 camRgb.setPreviewSize(416, 416)
@@ -57,6 +90,11 @@ monoLeft.setResolution(dai.MonoCameraProperties.SensorResolution.THE_400_P)
 monoLeft.setBoardSocket(dai.CameraBoardSocket.LEFT)
 monoRight.setResolution(dai.MonoCameraProperties.SensorResolution.THE_400_P)
 monoRight.setBoardSocket(dai.CameraBoardSocket.RIGHT)
+
+imu.enableIMUSensor(dai.IMUSensor.ROTATION_VECTOR, 400)
+imu.setBatchReportThreshold(1)
+imu.setMaxBatchReports(10)
+imu.out.link(xoutIMU.input)
 
 # setting node configs
 #stereo.setDefaultProfilePreset(dai.node.StereoDepth.PresetMode.HIGH_DENSITY)
@@ -111,11 +149,14 @@ def gen_frames():
     detectionNNQueue = device.getOutputQueue(name="detections", maxSize=4, blocking=False)
     xoutBoundingBoxDepthMappingQueue = device.getOutputQueue(name="boundingBoxDepthMapping", maxSize=4, blocking=False)
     depthQueue = device.getOutputQueue(name="depth", maxSize=4, blocking=False)
+    imuQueue = device.getOutputQueue(name="imu", maxSize=50, blocking=False)
 
     startTime = time.monotonic()
     counter = 0
     fps = 0
     color = (255, 255, 255)
+
+    rot = ()
 
     ct = CentroidTracker()
 
@@ -123,6 +164,16 @@ def gen_frames():
         inPreview = previewQueue.get()
         inDet = detectionNNQueue.get()
         depth = depthQueue.get()
+        imuData = imuQueue.get()
+
+        imuPackets = imuData.packets
+        imuPacket = imuPackets[0]
+        rvValues = imuPacket.rotationVector
+        q0 = (rvValues.real, rvValues.i, rvValues.j, rvValues.k)
+        q1 = (0, 0, sqrt(2)/2, sqrt(2)/2)
+        q2 = quaternion_multiply(q1, q0)
+        yaw, pitch, roll = toEulerAngles(q2)
+        print(yaw, pitch, roll)
 
         frame = inPreview.getCvFrame()
 
@@ -170,7 +221,19 @@ def gen_frames():
             x2 = int(detection.xmax * width)
             y1 = int(detection.ymin * height)
             y2 = int(detection.ymax * height)
-            rects.append(((x1+x2)/2, (y1+y2)/2, detection.spatialCoordinates.x, detection.spatialCoordinates.y, detection.spatialCoordinates.z, detection.label))
+            obj3d = (detection.spatialCoordinates.x, detection.spatialCoordinates.y, detection.spatialCoordinates.z)
+
+            # pitch
+            Y = obj3d[1] * cos(-pitch) + obj3d[2] * -sin(-pitch)
+            Z = obj3d[1] * sin(-pitch) + obj3d[2] * cos(-pitch)
+            obj3d = (obj3d[0], Y, Z)
+            '''
+            # yaw
+            X = obj3d[0] * cos(yaw) + obj3d[2] * sin(yaw)
+            Z = obj3d[0] * -sin(yaw) + obj3d[2] * cos(yaw)
+            obj3d = (X, obj3d[1], Z)
+            '''
+            rects.append(((x1+x2)/2, (y1+y2)/2, obj3d[0], obj3d[1], obj3d[2], detection.label))
 
             try:
                 label = labelMap[detection.label]
@@ -178,11 +241,10 @@ def gen_frames():
                 label = detection.label
             cv2.putText(frame, str(label), (x1 + 10, y1 + 20), cv2.FONT_HERSHEY_TRIPLEX, 0.5, 255)
             cv2.putText(frame, "{:.2f}".format(detection.confidence*100), (x1 + 10, y1 + 35), cv2.FONT_HERSHEY_TRIPLEX, 0.5, 255)
-            cv2.putText(frame, f"X: {int(detection.spatialCoordinates.x)} mm", (x1 + 10, y1 + 50), cv2.FONT_HERSHEY_TRIPLEX, 0.5, 255)
-            cv2.putText(frame, f"Y: {int(detection.spatialCoordinates.y)} mm", (x1 + 10, y1 + 65), cv2.FONT_HERSHEY_TRIPLEX, 0.5, 255)
-            cv2.putText(frame, f"Z: {int(detection.spatialCoordinates.z)} mm", (x1 + 10, y1 + 80), cv2.FONT_HERSHEY_TRIPLEX, 0.5, 255)
-            print_str = print_str + "%s,%d,%d,%d,%d,%f,%f,%f;" %(label, x1, y1, x2, y2,
-                                                                        detection.spatialCoordinates.x, detection.spatialCoordinates.y, detection.spatialCoordinates.z)
+            cv2.putText(frame, f"X: {int(obj3d[0])} mm", (x1 + 10, y1 + 50), cv2.FONT_HERSHEY_TRIPLEX, 0.5, 255)
+            cv2.putText(frame, f"Y: {int(obj3d[1])} mm", (x1 + 10, y1 + 65), cv2.FONT_HERSHEY_TRIPLEX, 0.5, 255)
+            cv2.putText(frame, f"Z: {int(obj3d[2])} mm", (x1 + 10, y1 + 80), cv2.FONT_HERSHEY_TRIPLEX, 0.5, 255)
+            print_str = print_str + "%s,%d,%d,%d,%d,%f,%f,%f;" %(label, x1, y1, x2, y2, obj3d[0], obj3d[1], obj3d[2])
             cv2.rectangle(frame, (x1, y1), (x2, y2), color, cv2.FONT_HERSHEY_SIMPLEX)
 
         objects = ct.update(rects)
