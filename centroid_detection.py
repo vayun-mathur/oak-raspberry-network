@@ -87,6 +87,8 @@ class CentroidTracker():
 				# val
 				if row in usedRows or col in usedCols:
 					continue
+				if dist.euclidean(self.objects[objectIDs[row]][2:], inputCentroids[col][2:]) > 2000:
+					continue
 				# otherwise, grab the object ID for the current row,
 				# set its new centroid, and reset the disappeared
 				# counter
