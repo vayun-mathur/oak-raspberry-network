@@ -6,9 +6,13 @@ import numpy as np
 import time
 import socket
 import threading
-from flask import Flask, render_template, Response
+from flask import Flask, render_template, Response, url_for, copy_current_request_context
+from flask_socketio import SocketIO, emit
 from centroid_detection import CentroidTracker
 from math import atan2, asin, pi, sin, cos, sqrt
+from data_stream import DataStream
+from random import random
+from time import sleep
 
 def quaternion_multiply(quaternion1, quaternion0):
     w0, x0, y0, z0 = quaternion0
@@ -45,10 +49,7 @@ Spatial Tiny-yolo example
   Can be used for tiny-yolo-v3 or tiny-yolo-v4 networks
 '''
 
-print("started")
 nnBlobPath = str((Path(__file__).parent / Path('./models/frozen_darknet_yolov4_model.blob')).resolve().absolute())
-
-print("loaded")
 
 file = open("coco.names")
 labelMap = [line.rstrip() for line in file]
@@ -132,13 +133,28 @@ spatialDetectionNetwork.passthroughDepth.link(xoutDepth.input)
 
 app = Flask(__name__)
 
+socketio = SocketIO(app, async_mode=None, logger=True, engineio_logger=True)
+
 HOST = '' 
 PORT = 12801
 
-s = socket.socket(socket.AF_INET, socket.SOCK_STREAM) 
-s.bind((HOST, PORT)) 
-s.listen(1)
-conn, addr = s.accept()
+data_stream = DataStream(PORT)
+
+thread = threading.Thread()
+thread_stop_event = threading.Event()
+
+def randomNumberGenerator():
+    """
+    Generate a random number every 1 second and emit to a socketio instance (broadcast)
+    Ideally to be run in a separate thread?
+    """
+    #infinite loop of magical random numbers
+    print("Making random numbers")
+    while not thread_stop_event.isSet():
+        number = round(random()*10, 3)
+        print(number)
+        socketio.emit('newnumber', {'number': number}, namespace='/test')
+        socketio.sleep(5)
 
 # Connect to device and start pipeline
 def gen_frames():
@@ -173,7 +189,6 @@ def gen_frames():
         q1 = (0, 0, sqrt(2)/2, sqrt(2)/2)
         q2 = quaternion_multiply(q1, q0)
         yaw, pitch, roll = toEulerAngles(q2)
-        print(yaw, pitch, roll)
 
         frame = inPreview.getCvFrame()
 
@@ -258,14 +273,10 @@ def gen_frames():
 
         if(print_str != ""):
             print_str = print_str + '\n'
-            conn.sendall(print_str.encode('utf-8'))
+            data_stream.write(print_str)
         cv2.putText(frame, "NN fps: {:.2f}".format(fps), (2, frame.shape[0] - 4), cv2.FONT_HERSHEY_TRIPLEX, 0.4, color)
         #cv2.imshow("depth", depthFrameColor)
-        cv2.imshow("rgb", frame)
-
-        key = cv2.waitKey(1) & 0xFF
-        if key == ord('q'):
-            break
+        #cv2.imshow("rgb", frame)
 
         ret, buffer = cv2.imencode('.jpg', frame)
         frame = buffer.tobytes()
@@ -284,4 +295,19 @@ def index():
     """Video streaming home page."""
     return render_template('index.html')
 
-app.run(host='0.0.0.0', port=12802)
+@socketio.on('connect', namespace='/test')
+def test_connect():
+    # need visibility of the global thread object
+    global thread
+    print('Client connected')
+
+    #Start the random number generator thread only if the thread has not been started before.
+    if not thread.is_alive():
+        print("Starting Thread")
+        thread = socketio.start_background_task(randomNumberGenerator)
+
+@socketio.on('disconnect', namespace='/test')
+def test_disconnect():
+    print('Client disconnected')
+
+socketio.run(app)
