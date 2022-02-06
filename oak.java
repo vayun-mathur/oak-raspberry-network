@@ -13,17 +13,23 @@ public class Oak {
     }
 
     private BufferedReader m_read;
+    private PrintWriter m_out;
 
     public Oak(String hostname, int port) {
         Socket so;
         try {
             so = new Socket(hostname, port);
             m_read = new BufferedReader(new InputStreamReader(so.getInputStream()));
+            m_out = new PrintWriter(so.getOutputStream());
         } catch (IOException e) {
             e.printStackTrace();
         }
         while(true) {
             try {
+                m_out.println("Hello world " + System.currentTimeMillis());
+                m_out.flush();
+                System.out.println(System.currentTimeMillis());
+                Thread.sleep(20);
                 if (m_read.ready()) {
                     String str = m_read.readLine();
                     String[] objs = str.split(";");
@@ -46,7 +52,7 @@ public class Oak {
                     }
                     evaluateDetections(dec);
                 }
-            } catch (IOException e) {
+            } catch (Exception e) {
                 e.printStackTrace();
             }
         }
